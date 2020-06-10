@@ -101,6 +101,14 @@ const CLOUD_SPEED = 1;
 
 const upVector = new THREE.Vector3(0, 1, 0);
 
+const generator = indev({
+  seed: 'cloud',
+});
+const cloudNoise = generator.uniform({
+  frequency: 0.002,
+  octaves: 8,
+});
+
 const renderer = new THREE.WebGLRenderer({
   antialias: true,
   alpha: true,
@@ -164,7 +172,7 @@ const cloudTypes = [
 ];
 const _makeCloudPatchGeometry = () => {
   const cloudGeometries = [];
-  const numClouds = 5 + Math.floor(rng() * 20);
+  const numClouds = 1 + Math.round(rng() * 10);
   for (let j = 0; j < numClouds; j++) {
     const cloudType = cloudTypes[Math.floor(cloudTypes.length * rng())];
     const geometry = cloudType.clone()
@@ -192,61 +200,42 @@ const _makeCloudPatchGeometry = () => {
   const geometry = BufferGeometryUtils.mergeBufferGeometries(cloudGeometries);
   return geometry;
 };
-const cloudPatchGeometries = (() => {
-  const numCloudGeometries = 20;
-  const result = Array(numCloudGeometries);
-  for (let i = 0; i < numCloudGeometries; i++) {
-    result[i] = _makeCloudPatchGeometry();
-  }
-  return result;
-})();
 
-const cloudChunkMeshes = {};
-
+const cloudProbability = 0.05;
 const _makeCloudChunkMesh = (x, y) => {
-  const positions = new Float32Array(NUM_POSITIONS_CHUNK);
-  const normals = new Float32Array(NUM_POSITIONS_CHUNK);
-  const indices = new Uint32Array(NUM_POSITIONS_CHUNK);
-  let attributeIndex = 0;
-  let indexIndex = 0;
-
   const position = new THREE.Vector3();
   const quaternion = new THREE.Quaternion();
   const scale = new THREE.Vector3(1, 1, 1);
   const matrix = new THREE.Matrix4();
 
-  const cloudRng = new alea(x + ':' + y);
-  const numCloudPatches = 2;
+  const cloudRng = new alea('cloud:' + x + ':' + y);
+
   const cloudGeometries = [];
-  for (let i = 0; i < numCloudPatches; i++) {
-    const dx = cloudRng() * NUM_CELLS;
-    const dy = cloudRng() * NUM_CELLS;
-    // const cloudPatchGeometry = cloudPatchGeometries[Math.floor(cloudRng() * cloudTypes.length)];
-    const cloudPatchGeometry = _makeCloudPatchGeometry();
+  const dx = NUM_CELLS/2;
+  const dy = NUM_CELLS/2;
+  // for (let dy = 0; dy < NUM_CELLS_OVERSCAN; dy++) {
+    // for (let dx = 0; dx < NUM_CELLS_OVERSCAN; dx++) {
+      const ax = (x * NUM_CELLS) + dx;
+      const ay = (y * NUM_CELLS) + dy;
+      const v = cloudNoise.in2D(ax + 1000, ay + 1000);
 
-    position.set(
-      (x * NUM_CELLS) + dx,
-      (cloudRng() * 10),
-      (y * NUM_CELLS) + dy
-    )
-    quaternion.setFromAxisAngle(upVector, cloudRng() * Math.PI * 2);
-    matrix.compose(position, quaternion, scale);
-    const geometry = cloudPatchGeometry
-      .clone()
-      .applyMatrix4(matrix);
-    cloudGeometries.push(geometry);
-  }
+      if (v < cloudProbability) {
+        const cloudPatchGeometry = _makeCloudPatchGeometry();
+        position.set(
+          (x * NUM_CELLS) + dx,
+          (cloudRng() * 10),
+          (y * NUM_CELLS) + dy
+        );
+        quaternion.setFromAxisAngle(upVector, cloudRng() * Math.PI * 2);
+        matrix.compose(position, quaternion, scale);
+        const geometry = cloudPatchGeometry
+          .applyMatrix4(matrix);
+        cloudGeometries.push(geometry);
+      }
+    // }
+  // }
 
-  let geometry = BufferGeometryUtils.mergeBufferGeometries(cloudGeometries);
-  // geometry = geometry.toNonIndexed();
-  // geometry.computeVertexNormals();
-  return geometry;
-  /* return {
-    positions: new Float32Array(positions.buffer, positions.byteOffset, attributeIndex),
-    normals: new Float32Array(normals.buffer, normals.byteOffset, attributeIndex),
-    indices: new Uint32Array(indices.buffer, indices.byteOffset, indexIndex),
-    boundingSphere: Float32Array.from(boundingSphere.center.toArray().concat([boundingSphere.radius])),
-  }; */
+  return cloudGeometries.length > 0 ? BufferGeometryUtils.mergeBufferGeometries(cloudGeometries) : null;
 };
 
 const CLOUD_SHADER = {
@@ -263,21 +252,24 @@ const CLOUD_SHADER = {
   vertexShader: `\
 // uniform float worldTime;
 varying vec3 vN;
+varying vec3 vPosition;
 // varying vec3 vP;
 
 void main() {
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position.x, position.y, position.z, 1.0);
   vN = normal;
+  vPosition = position;
   // vP = normalize(vec3(position.x, 0.0, position.z));
 }
 `,
   fragmentShader: `\
 uniform float sunIntensity;
 varying vec3 vN;
+varying vec3 vPosition;
 // varying vec3 vP;
 
 void main() {
-  gl_FragColor = vec4(vec3(0.2 + (1.0 * sunIntensity) + (0.1 + (0.4 * sunIntensity)) * dot(vN, vec3(-1, -1, -1))), 0.8);
+  gl_FragColor = vec4(vec3((vPosition.y + 30.0) / 40.0), 1.0);
 }
 `
 };
@@ -289,30 +281,17 @@ const cloudMaterial = new THREE.ShaderMaterial({
   // depthWrite: false,
 });
 
-const cloudObject = (() => {
-  /* const {positions, normals, indices} = geometryBuffer.getAll();
-
-  const geometry = new THREE.BufferGeometry();
-  const positionAttribute = new THREE.BufferAttribute(positions, 3);
-  positionAttribute.dynamic = true;
-  geometry.setAttribute('position', positionAttribute);
-  const normalAttribute = new THREE.BufferAttribute(normals, 3);
-  normalAttribute.dynamic = true;
-  geometry.setAttribute('normal', normalAttribute);
-  const indexAttribute = new THREE.BufferAttribute(indices, 1);
-  indexAttribute.dynamic = true;
-  geometry.setIndex(indexAttribute); */
-
-  const geometry = _makeCloudChunkMesh(0, 0);
-  const mesh = new THREE.Mesh(geometry, cloudMaterial);
-  mesh.frustumCulled = false;
-  // mesh.updateModelViewMatrix = _updateModelViewMatrix;
-  // mesh.updateNormalMatrix = _updateNormalMatrix;
-  // mesh.renderList = [];
-  return mesh;
-})();
-console.log('got cloud', cloudObject);
-scene.add(cloudObject);
+for (let x = -8; x <= 8; x++) {
+  for (let z = -8; z <= 8; z++) {
+    const geometry = _makeCloudChunkMesh(x, z);
+    if (geometry) {
+      const mesh = new THREE.Mesh(geometry, cloudMaterial);
+      mesh.position.y = 32;
+      mesh.frustumCulled = false;
+      scene.add(mesh);
+    }
+  }
+}
 
 function animate() {
   orbitControls.update();
