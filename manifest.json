@@ -2,5 +2,6 @@
   "name": "cloud",
   "description": "WebXR Cloud",
   "xr_type": "webxr-site@0.0.1",
-  "start_url": "cloud.html"
+  "start_url": "cloud.html",
+  "repository": "git@github.com:avaer/cloud.git"
 }
